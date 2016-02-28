@@ -35,7 +35,7 @@ end
 
 require 'nkf'
 
-$VERSION = '0.1.0'
+$VERSION = '0.1.1'
 
 # 原則として平仮名で表記する語句
 # Http://www.ieice.org/jpn/shiori/pdf/furoku_e.pdf 参照
