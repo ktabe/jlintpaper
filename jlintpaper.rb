@@ -35,14 +35,28 @@ end
 
 require 'nkf'
 
-$VERSION = '0.1.1'
+$VERSION = '0.2.0'
 
 # 原則として平仮名で表記する語句
 # Http://www.ieice.org/jpn/shiori/pdf/furoku_e.pdf 参照
 nokanji = '事又之為共訳故挙'
 
+# 対応する(カッコ)にマッチする正規表現
+paren = '(?<paren>
+  \(([^()（）]|\g<paren>)*\)
+ |
+ （([^()（）]|\g<paren>)*）
+)'
+
 # チェック用の正規表現
 $regexp = [
+#  {'regexp'=>/#{paren}/x, 'desc'=>'paren'},
+  {'regexp'=>/\(  ([^()（）]|#{paren})*  $/x, 'desc'=>'半角(に対応する)がない'},
+  {'regexp'=>/（  ([^()（）]|#{paren})*  $/x, 'desc'=>'全角（に対応する）がない'},
+  {'regexp'=>/^   ([^()（）]|#{paren})*\)/x, 'desc'=>'半角)に対応する(がない'},
+  {'regexp'=>/^   ([^()（）]|#{paren})*）/x, 'desc'=>'全角）に対応する（がない'},
+  {'regexp'=>/\(  ([^()（）]|#{paren})*  ）/x, 'desc'=>'半角(と全角）が対応'},
+  {'regexp'=>/（  ([^()（）]|#{paren})*  \)/x, 'desc'=>'全角（と半角)が対応'},
   # 表記
   {'regexp'=>/[０-９Ａ-Ｚａ-ｚ]/, 'desc'=>'全角英数字は使わない'},
   {'regexp'=>/,[^\d\s]/, 'desc'=>',の後に空白がない'},
@@ -122,6 +136,60 @@ $regexp.each {|ent|
   ent['match'] = ''
 }
 
+# single paragraph
+class Para
+  attr_reader :str
+  attr_reader :line
+  attr_reader :sentences
+  def initialize(str, line)
+    @str = str
+    @line = line
+  end
+  def to_s
+    "#{@line}: #{@str}"
+  end
+
+  def chopToSentences()
+    # print "paragraph [#{to_s()}]\n"
+    @sentences = []
+    lnum = line
+    lstart = lnum
+    remain = ''
+    str.each_line {|l|
+      # print "lnum = #{lnum}, lstart = #{lstart}, [#{l}]\n"
+      # print "remain = #{remain}\n"
+      lstart = lnum if remain == '' || remain == "\n"
+      remain << l
+      # print "#{lnum}: [#{l}] [#{tmp}]\n"
+      while /.*?([．。?？])/m =~ remain do
+        #print "remain[" + remain + "]"
+        remain = $'
+        remain = '' if remain == "\n"
+        finish($&, lstart, lnum)
+        lstart = lnum
+      end
+      lnum = lnum + 1
+    }
+    if (remain != '') then
+      finish(remain, lstart, lnum)
+    end
+    # @sentences.each {|s|
+    # print "sentence #{s}\n"
+    # }
+  end
+
+  def finish(s, lstart, lnum)
+    # print "finish [#{s}]\n"
+    # 日本語文字に続く改行を削除
+    # (?<=pat)は肯定後読み (?!=pat)は肯定先読み
+    s.gsub!(/(?<=[\p{Han}\p{Hiragana}\p{Katakana}，．、。])\n\s*(?=[\p{Han}\p{Hiragana}\p{Katakana}，．、。])/m, '')
+    # 残った改行は空白に置換
+    s.gsub!(/\n/, ' ')
+    obj = Sentence.new(s, lstart, lnum)
+    @sentences << obj
+  end
+end
+
 #
 # single sentence
 #
@@ -146,80 +214,54 @@ class Sentence
   end
 end
 
-#
-# chop LaTeX source files into sentences
-#
-def chopTexts(texts)
-  texts.gsub!(/\\COM\{(.*?)(?<!\\)\}/m) {|x| x.gsub(/^.*$/, '')}
-  texts.gsub!(/\\TODO\{(.*?)(?<!\\)\}/m) {|x| x.gsub(/^.*$/, '')}
+def removeComments(texts)
+  # *? は最小量指定子
+  texts.gsub!(/(?<!\\)%.*?$/m, '')
+  texts.gsub!(/\\begin{comment}.*?\\end{comment}/m) {|x| x.gsub(/^.*$/, '')}
+  texts.gsub!(/.*\\begin{document}/m) {|x| x.gsub(/^.*$/, '')}
+  texts.gsub!(/\\end{document}.*/m) {|x| x.gsub(/^.*$/, '')}
+end
 
-  sentences = []
-  remain = ''
-  lnum = 0                        # 現在の行番号
-  lstart = 0                      # 文の開始行番号
+def chopToPararaphs(texts)
+  paras = []
+  lnum = 1                        # 現在の行番号
+  lstart = 1                      # 段落の開始行番号
+  p = ''
+  # add sentinel
+  texts = texts + "\n\n" if (!texts =~ /\n\n$/)
   texts.each_line {|l|
-    lnum = lnum + 1
-    #print "#{lnum}: [#{l}]"
-    lstart = lnum if remain == ''
-    # %から改行までを削除
-    remain << l.gsub(/(?<!\\)%.*$/m, '')
-    # print "#{lnum}: [#{l}] [#{tmp}]\n"
+    # print "#{lnum}: [#{l}]\n"
+    # 段落の先頭に空行を足さない
+    if (p == '' && l == "\n") then
+      lstart = lnum
+    else
+      p << l
+    end
 
     # 文ごとに切り分ける
-    while /.*?([．。]|\n\n|\\\\|\\item|\\end\{)/m =~ remain do
-      #print "remain[" + remain + "]"
-      remain = $'
-      str = $&;
-      str.gsub!(/^\s+/, '')
-      str.gsub!(/(\\item|\\end\{)/, '')
-      # print 'str1[' + str + ']'
-      # (?<=pat)は肯定後読み (?!=pat)は肯定先読み
-      str.gsub!(/(?<=[\p{Han}\p{Hiragana}\p{Katakana}，．、。])\n(?=[\p{Han}\p{Hiragana}\p{Katakana}，．、。])/, '')
-      # 残った改行は空白に置換
-      str.gsub!(/\n/, ' ')
-      #print 'str2[' + str + ']'
-
-      next if /\A\s*\Z/ =~ str
-
-      if /\\((sub)*section|paragraph)\{.*?\}/ =~ str then
-        left = $`
-        title = $&
-        str = $'
-        # print "left = [#{left}]\n"
-        sentences << Sentence.new(left, lstart, lnum) if /\A\s*\Z/ !~ left
-        # print "SECTION #{title}\n"
+    if /(\n\n|\\\\|\\newline|\\item|\\(begin|end|(sub)*section\*?)\{.*?\}|\\paragraph|\\par\s|\\newpage|\\clear(double)?page)/m =~ p then
+      p = $`
+      if (p != '') then
+        # print "line #{lstart}: para[" + p + "]\n";
+        paras << Para.new(p, lstart)
       end
-
-      obj = Sentence.new(str, lstart, lnum)
-      # print "str = [#{obj}]\n"
-      sentences << obj
+      p = $'
       lstart = lnum
     end
-    #  lstart = lnum
+    lnum = lnum + 1
   }
-  sentences
+  paras
 end
+
+$zpline = ''
+$zkline = ''
+$zkuten = 0
+$zperiod = 0
 
 # check texts
 def checkTexts(sentences)
-  skip = true
-  lnum = -1
-  $zpline = ''
-  $zkline = ''
-  $zkuten = 0
-  $zperiod = 0
-
   sentences.each {|obj|
     line = obj.str
-
-    # skip until \begin{document}
-    skip = false if skip && /\\begin\{document\}/ =~ line
-    # skip from \begin{comment} to \end{comment}
-    skip = false if skip && /\\end\{comment\}/ =~ line
-    skip = true if !skip && /\\begin\{comment\}/ =~ line
-    next if skip
-    #  next if /^%/ =~ line
-    #  next if /^\\COM\{/ =~ line
     line.gsub!(/\\begin\{.*?\}(\[.*?\])?/, '')
     line.gsub!(/\\end\{.*?\}/, '')
     line.gsub!(/\\clearpage/, '')
@@ -244,10 +286,6 @@ def checkTexts(sentences)
       end
     }
   }
-  if skip then
-    STDERR.print "\\begin{document}が見つかりませんでした!\n"
-    exit 1
-  end
 end
 
 def printRegexpCheck()
@@ -328,8 +366,14 @@ print " 間違った指摘をする可能性が十分あるので注意するこ
 print " checked by #{$0} #{$VERSION}\n"
 print "=====================================================\n\n"
 
-sentences = chopTexts(texts)
-checkTexts(sentences)
+removeComments(texts)
+paras = chopToPararaphs(texts)
+
+paras.each {|p|
+  p.chopToSentences()
+  checkTexts(p.sentences)
+}
+
 printRegexpCheck()
 printKutoutenCheck()
 checkFigTab(texts)
