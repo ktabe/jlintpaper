@@ -36,7 +36,7 @@ end
 require 'nkf'
 require 'optparse'
 
-$VERSION = '0.2.1'
+$VERSION = '0.2.2'
 
 # 原則として平仮名で表記する語句
 ieiceURL = 'http://www.ieice.org/jpn/shiori/pdf/furoku_d.pdf'
