@@ -67,14 +67,21 @@ paren = '(?<paren>
  （([^()（）]|\g<paren>)*）
 )'
 
+# 対応する`引用符'にマッチする正規表現
+quote = '(?<quote>
+  `([^`\']|\g<quote>)*\'
+)'
+
 # 段落に対するチェック
 $regexpPara = [
-  {'regexp'=>/\(  ([^()（）]|#{paren})*  \Z/xm, 'desc'=>'半角(に対応する)がない'},
-  {'regexp'=>/（  ([^()（）]|#{paren})*  \Z/xm, 'desc'=>'全角（に対応する）がない'},
+  {'regexp'=>/\((?=  ([^()（）]|#{paren})*  \Z)/xm, 'desc'=>'半角(に対応する)がない'},
+  {'regexp'=>/（(?=  ([^()（）]|#{paren})*  \Z)/xm, 'desc'=>'全角（に対応する）がない'},
   {'regexp'=>/\A   ([^()（）]|#{paren})*\)/xm, 'desc'=>'半角)に対応する(がない'},
   {'regexp'=>/\A   ([^()（）]|#{paren})*）/xm, 'desc'=>'全角）に対応する（がない'},
   {'regexp'=>/\(  ([^()（）]|#{paren})*  ）/xm, 'desc'=>'半角(と全角）が対応'},
   {'regexp'=>/（  ([^()（）]|#{paren})*  \)/xm, 'desc'=>'全角（と半角)が対応'},
+  {'regexp'=>/`(?=  ([^`\']|#{quote})*  \Z)/xm, 'desc'=>'`(左引用符)に対応する\'(右引用符)がない'},
+  {'regexp'=>/\A  ([^`\']|#{quote})*    \'/xm, 'desc'=>'\'(右引用符)に対応する`(左引用符)がない'},
 ]
 
 # 文に対するチェック
@@ -274,9 +281,12 @@ class Paragraph
   end
 
   def check_paragraph
+    lnum = getlinenum(@str)
+    line = removelinenum(@str)
     $regexpPara.each {|c|
-      if c['regexp'] =~ @str then
-        tmp = @str.gsub(c['regexp'], '>>>\&<<<')
+      if c['regexp'] =~ line then
+        tmp = line.gsub(c['regexp'], '>>>\&<<<')
+        tmp = addlinenum(tmp, lnum)
         c['match'] <<= tmp.gsub(/\n/, "\n") + "\n";
       end
     }
