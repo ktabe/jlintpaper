@@ -13,7 +13,7 @@
 #
 # Web site: <http://github.com/ktabe/jlintpaper/>
 #
-# Copyright 2016 (C) Kota Abe
+# Copyright 2016-2023 (C) Kota Abe
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,7 +28,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
 if RUBY_VERSION < '2.0.0'
   abort 'require ruby 2.0 or later'
 end
@@ -36,7 +35,29 @@ end
 require 'nkf'
 require 'optparse'
 
-$VERSION = '0.2.3'
+$VERSION = '0.3.0'
+$debug = false
+
+$marker_mono = ['>>>', '<<<']
+$marker_color = ["\e[45m", "\e[0m"] # マジェンタ
+
+# 対応する(カッコ)にマッチする正規表現
+paren = '(?<paren>
+  \(([^()（）]|\g<paren>)*\)
+ |
+ （([^()（）]|\g<paren>)*）
+)'
+
+# 対応する`引用符'にマッチする正規表現
+quote = '(?<quote>
+  `([^`\']|\g<quote>)*\'
+)'
+
+# rubyの正規表現メモ:
+# (?=pat) 肯定先読み(positive lookahead)
+# (?!pat) 否定先読み(negative lookahead)
+# (?<=pat) 肯定後読み(positive lookbehind)
+# (?<!pat) 否定後読み(negative lookbehind)
 
 # 原則として平仮名で表記する語句
 ieiceURL = 'http://www.ieice.org/jpn/shiori/pdf/furoku_d.pdf'
@@ -54,58 +75,25 @@ ieiceURL = 'http://www.ieice.org/jpn/shiori/pdf/furoku_d.pdf'
 nokanji = '事物共故訳此之其為虞又'
 # nokanji = '挙'
 
-# rubyの正規表現メモ:
-# (?=pat) 肯定先読み(positive lookahead)
-# (?!pat) 否定先読み(negative lookahead)
-# (?<=pat) 肯定後読み(positive lookbehind)
-# (?<!pat) 否定後読み(negative lookbehind)
-
-# 対応する(カッコ)にマッチする正規表現
-paren = '(?<paren>
-  \(([^()（）]|\g<paren>)*\)
- |
- （([^()（）]|\g<paren>)*）
-)'
-
-# 対応する`引用符'にマッチする正規表現
-quote = '(?<quote>
-  `([^`\']|\g<quote>)*\'
-)'
-
 # 段落に対するチェック
-$regexpPara = [
-  {'regexp'=>/\((?=  ([^()（）]|#{paren})*  \Z)/xm, 'desc'=>'半角(に対応する)がない'},
-  {'regexp'=>/（(?=  ([^()（）]|#{paren})*  \Z)/xm, 'desc'=>'全角（に対応する）がない'},
-  {'regexp'=>/\A   ([^()（）]|#{paren})*\)/xm, 'desc'=>'半角)に対応する(がない'},
-  {'regexp'=>/\A   ([^()（）]|#{paren})*）/xm, 'desc'=>'全角）に対応する（がない'},
-  {'regexp'=>/\(  ([^()（）]|#{paren})*  ）/xm, 'desc'=>'半角(と全角）が対応'},
-  {'regexp'=>/（  ([^()（）]|#{paren})*  \)/xm, 'desc'=>'全角（と半角)が対応'},
-  {'regexp'=>/`(?=  ([^`\']|#{quote})*  \Z)/xm, 'desc'=>'`(左引用符)に対応する\'(右引用符)がない'},
-  {'regexp'=>/\A  ([^`\']|#{quote})*    \'/xm, 'desc'=>'\'(右引用符)に対応する`(左引用符)がない'},
-]
-
-# 文に対するチェック
-$regexp = [
-  # 表記
+$regexp_p = [
+  # 文字
   {'regexp'=>/[０-９Ａ-Ｚａ-ｚ]/, 'desc'=>'全角英数字は使わない'},
-  {'regexp'=>/[^\\],[^\d\s'"]/, 'desc'=>',の後に空白がない'},
-  {'regexp'=>/（\p{ascii}*）/, 'desc'=>'全角括弧内が半角文字のみ(半角括弧にする?)'},
-  {'regexp'=>/(?<!\s|。|．|\.|}|\)|）|\\hline)\s*$/, 'desc'=>'文末に句点やピリオドがない(?)'},
-  #      {'regexp'=>/[^ \t}\.．。][ \t]*$/, 'desc'=>'文末が句点やピリオドで終わっていない'},
-  #      {'regexp'=>/[，、][ \t]*$/, 'desc'=>'文末がカンマや読点で終わっている'},
-  {'regexp'=>/^[ \t][，、]/, 'desc'=>'文頭がカンマや読点から始まっている'},
-  {'regexp'=>/(?<=\p{^ascii})[ \t]+(?=\p{^ascii})/, 'desc'=>'不要な半角スペース(?)'},
-  {'regexp'=>/(?<=[．。、，])[ \t]+(?=\p{ascii})/, 'desc'=>'不要な半角スペース(?)'},
-  {'regexp'=>/(?<=\p{ascii})[ \t]+(?=[．。、，])/, 'desc'=>'不要な半角スペース(?)'},
-  {'regexp'=>/(?<=\p{^ascii})[.,]/, 'desc'=>'日本語文字のあとに半角カンマやピリオド（原則全角）'},
-  {'regexp'=>/[“”"]/, 'desc'=>'ダブルクォーテーション(LaTeXでは ``と\'\' を使う．プログラムリストなどでは"はOK)'},
+  {'regexp'=>/\p{^ascii}[.,]/, 'desc'=>'日本語文字のあとに半角カンマやピリオド（原則全角）'},
+  {'regexp'=>/(?<!\\),(?![\d\s'"}])/, 'desc'=>',の後に空白がない'},
+  {'regexp'=>/
+  (?:\p{^ascii})[ \t]+(?:\p{^ascii})
+  |(?<=[．。、，])[ \t]+(?=\p{ascii})
+  |(?<=\p{ascii})[ \t]+(?=[．。、，])
+  /x, 'desc'=>'不要な半角スペース(?)'},
+  {'regexp'=>/[“”"]/, 'desc'=>'ダブルクォーテーションは使わない(代わりに``と\'\'を使う．プログラムリストではOK)'},
+
   # 相互参照
   {'regexp'=>/(^|[^図表式\s])\s*\\ref\{[^}]*\}(?![節章項])/, 'desc'=>'\\refの前後に図・表・式あるいは章・節・項がない'},
-  {'regexp'=>/[.\d]+[章節項]|[図表]\d+|[^方]式\d+/, 'desc'=>'章や節，図表式番号を直接指定している?(\\refを使うべき)'},
-  {'regexp'=>/[.\d]+で(前|後)?述/, 'desc'=>'章や節番号を直接記述している?(「\\ref{..}章」のように書くべき)'},
+  {'regexp'=>/[.\d]+\s*[章節項]|[図表]\s*\d+|(?<!方)式\s*\d+/, 'desc'=>'章や節，図表式番号を直接指定している?(\\refを使うべき)'},
+  {'regexp'=>/[.\d]+\s*で(前|後)?述/, 'desc'=>'章や節番号を直接記述している?(「\\ref{..}章」のように書くべき)'},
+
   # 漢字とひらがな
-  {'regexp'=>/(?<=\p{^Han}|)[#{nokanji}](?=\p{^Han})/,
-   'desc'=>"原則として平仮名で表記すべき語句(#{nokanji} #{ieiceURL}"},
   # とき（事故のときは連絡する）
   # とおり（次のとおりである）
   # ある（その点に問題がある）
@@ -131,13 +119,30 @@ $regexp = [
   # 因る→よる
   # ほか（特別の場合を除くほか）
   # 外→ほか
-  {'regexp'=>/(全て|の時[^点間計]|の通り|有る|在る|居る|成る|出来|て上げる|て行く|て置く|て来る|て仕舞う|て見る|無い|\p{^Han}様\p{Hiragana}|\p{^Han}位{^Han}|丈|程[^度]|以って|且つ|但し|但(?=書)|従って|因る|(?<!その)他[^の\p{Han}\p{Katakana}]|(?<![の\p{Han}])外[^\p{Han}れ])/,
-   'desc'=>"原則として平仮名で表記すべき語句(全て，出来，無い，時，通り，など) #{ieiceURL}"},
-  {'regexp'=>/(?<=[^カ\p{Han}])所(?=\p{^Han})/,
-   # ところ（現在のところ差し支えない）
-   'desc'=>"原則として平仮名で表記すべき語句(所) #{ieiceURL}"},
-  # 等（ら）→ら
-  {'regexp'=>/(?<=[^均同冪平対])等(?=[^し\p{Han}])/, 'desc'=>'原則として平仮名で表記すべき語句(等)'},
+  {'regexp'=>/(
+    全て
+    |(?<=の)時(?![点間計刻])
+    |の通り
+    |有る|在る|居る|成る
+    |出来
+    |て上げる|て行く|て置く|て来る|て仕舞う|て見る
+    |無い
+    |\p{^Han}様\p{Hiragana}
+    |\p{^Han}位\p{^Han}
+    |丈
+    |程(?!度)
+    |以って
+    |且つ
+    |但し|但(?=書)
+    |従って
+    |因る
+    |(?<!その)他[^の\p{Han}\p{Katakana}]
+    |(?<![の\p{Han}])外[^\p{Han}れ]     # 「ほか」と読む場合
+    |(?<=[^カ\p{Han}])所(?=\p{^Han})    # ところ（現在のところ差し支えない）
+    |(?<![均同冪平対])等(?=[^し\p{Han}])  # 等→ら
+    |(?<=\p{^Han}|^)[#{nokanji}](?=\p{^Han})
+    )/x,
+    'desc'=>"原則として平仮名で表記すべき語句 (cf. #{ieiceURL})"},
   {'regexp'=>/[一二三四五六七八九〇][つ個]/, 'desc'=>'一つ，二つなどが数値を表す場合はアラビア数字を用いる(日本語の言い回しならばOK)'},
   {'regexp'=>/同士/, 'desc'=>'同士→どうし'},
   {'regexp'=>/わかる/, 'desc'=>'わかる→分かる'},
@@ -149,23 +154,32 @@ $regexp = [
   {'regexp'=>/オーバー/, 'desc'=>'オーバー→オーバ'},
   {'regexp'=>/タイマー/, 'desc'=>'タイマー→タイマ'},
   {'regexp'=>/インターフェイス/, 'desc'=>'インターフェイス→インタフェース'},
+
   # 表現
+  {'regexp'=>/(です|ます|でしょう)[.．。が]/, 'desc'=>'「です・ます」調は使わない．「だ・である」調を使う（謝辞の中は良い）．'},
+  {'regexp'=>/が，/, 'desc'=>'気をつけるべき表現（接続助詞の「が」）'},
+  {'regexp'=>/考えられる/, 'desc'=>'気をつけるべき表現（考えられる）'},
   {'regexp'=>/そして/, 'desc'=>'原則として避けるべき語句（そして）'},
+  {'regexp'=>/が[わ分]かる/, 'desc'=>'原則として避けるべき表現（がわかる）'},
+  {'regexp'=>/のだ[．。]/, 'desc'=>'避けるべき表現「〜のだ．」→「〜のである．」'},
   {'regexp'=>/(なので|だから)/, 'desc'=>'口語表現「なので」「だから」→「であるため」'},
   {'regexp'=>/いけない/, 'desc'=>'口語表現（いけない）'},
-  {'regexp'=>/(?<!して)から[,，、]/, 'desc'=>'口語表現 「から」（理由を表す場合）→「ため」'},
-  {'regexp'=>/(です|ます|でしょう)[.．。が]/, 'desc'=>'「です・ます」調は使わない．「だ・である」調を使う（謝辞の中は良い）．'},
+  {'regexp'=>/(?<!して|こと)から[,，、]/, 'desc'=>'口語表現 「から」（理由を表す場合）→「ため」'},
   {'regexp'=>/いい/, 'desc'=>'口語表現「いい」→「よい」'},
   {'regexp'=>/けど/, 'desc'=>'口語表現「けど」→「が」'},
   {'regexp'=>/っ?たら/, 'desc'=>'口語表現「たら」→「ると」「れば」「る場合」「た場合」など'},
   {'regexp'=>/いろんな/, 'desc'=>'口語表現「いろんな」→「様々な」'},
   {'regexp'=>/((?<=が)い|要)(ら|り|る)/, 'desc'=>'口語表現「いる」→「必要とする」'},
+  {'regexp'=>/とっ?ても/, 'desc'=>'口語表現「とても」→「非常に」'},
+
   {'regexp'=>/をする/, 'desc'=>'「をする」→「する」or「を行う」(?)'},
   {'regexp'=>/をして/, 'desc'=>'「をして」→「して」or「を行なって」(?)'},
   {'regexp'=>/することができ(る|ない)/, 'desc'=>'「することができる」「することができない」→「できる」「できない」(?)'},
   {'regexp'=>/することが可能/, 'desc'=>'「することが可能」→「できる」(?)'},
   {'regexp'=>/なので/, 'desc'=>'「なので」→「であるため」or「ので」(?)'},
-  {'regexp'=>/\d{4,}[^年]/, 'desc'=>'大きな数字には3桁ごとにカンマを入れる(?)'},
+  # :数字 はポート番号などで使われるので除外
+  {'regexp'=>/(?<!:)\d{4,}(?!年)/, 'desc'=>'大きな数字には3桁ごとにカンマを入れる(?)'},
+
   # 書き間違え
   {'regexp'=>/郡/, 'desc'=>'群の間違い(?)'},
   {'regexp'=>/自立/, 'desc'=>'自律の間違い(?)'},
@@ -180,17 +194,44 @@ $regexp = [
   {'regexp'=>/(?<!る|ない|の|す|む|行う)ための/, 'desc'=>'「ための」の前が変(?)'},
   {'regexp'=>/をは/, 'desc'=>'をは(書き間違い?)'},
   {'regexp'=>/しように/, 'desc'=>'しように(書き間違い?)'},
-  # 文
-  {'regexp'=>/(\p{Han}|\p{Katakana}|[A-Za-z0-9])[.．。]$/, 'desc'=>'体言止め(?)'},
-  {'regexp'=>/(?<![うくすつぶむるいた）)}])[.．。]$/, 'desc'=>'文の終わり方がおかしい(?)'},
+
+  # 中国人留学生の典型的な間違い
+  # ここでは「ないの」は除外し，次でチェック
+  {'regexp'=>/(?<!互|くら|ぐら|な)いの(?!だが)/, 'desc'=>'形容詞の後に余分な「の」(?)'}, ## 等しいのため
+  # 「ないので」はOK
+  {'regexp'=>/(?<=ない)の(?!で)/, 'desc'=>'「ないの」→「ない」(?)'}, ## 少ないの場合
+  {'regexp'=>/(?<=い)だ(?=と)/, 'desc'=>'形容詞の後に余分な「だ」(?)'},  ## 少ないだと
+  #  {'regexp'=>/(?<=る)の(?!\p{Hiragana})/, 'desc'=>'余分な「の」(?)'},   ## いるの場合
+  {'regexp'=>/(?<=る)の(?![かにはで])/, 'desc'=>'余分な「の」(?)'},   ## いるの場合
+
+  # 括弧の対応
+  {'regexp'=>/（\p{ascii}*）/, 'desc'=>'全角括弧内が半角文字のみ(半角括弧にする?)'},
+  {'regexp'=>/\((?=  ([^()（）]|#{paren})*  \Z)/xm, 'desc'=>'半角(に対応する)がない'},
+  {'regexp'=>/（(?=  ([^()（）]|#{paren})*  \Z)/xm, 'desc'=>'全角（に対応する）がない'},
+  {'regexp'=>/\A   ([^()（）]|#{paren})*\)/xm, 'desc'=>'半角)に対応する(がない'},
+  {'regexp'=>/\A   ([^()（）]|#{paren})*）/xm, 'desc'=>'全角）に対応する（がない'},
+  {'regexp'=>/\(  ([^()（）]|#{paren})*  ）/xm, 'desc'=>'半角(と全角）が対応'},
+  {'regexp'=>/（  ([^()（）]|#{paren})*  \)/xm, 'desc'=>'全角（と半角)が対応'},
+  {'regexp'=>/`(?=  ([^`\']|#{quote})*  \Z)/xm, 'desc'=>'`(左引用符)に対応する\'(右引用符)がない'},
+  {'regexp'=>/\A  ([^`\']|#{quote})*    \'/xm, 'desc'=>'\'(右引用符)に対応する`(左引用符)がない'},
+]
+
+# 文に対するチェック
+$regexp_s = [
+  # 表記
+  {'regexp'=>/(?<!。|．|\.|\?|\)|\\hline|}|\]|\\\\)\s*$/, 'desc'=>'文末に句点やピリオドがない'},
+  {'regexp'=>/^\s*[，、．。]/, 'desc'=>'文頭が句読点類から始まっている'},
+  # {'regexp'=>/(\p{Han}|\p{Katakana}|[A-Za-z0-9])[.．。]$/, 'desc'=>'体言止め(?)'},
+  {'regexp'=>/(?<![うくすつぶむるいた）)}])[.．。]$/, 'desc'=>'文の終わり方がおかしい?(体言止め?)'},
   {'regexp'=>/[^\P{Hiragana}かがたはばやらいきしちにびみりくつすずえけげせてでへべめれおもとどのろを][，、]/, 'desc'=>'読点の前がおかしい(?)'},
   {'regexp'=>/は[，、].*はある[．。]$/, 'desc'=>'〜は，〜はある'},
+  {'regexp'=>/^.{100,}/, 'desc'=>'長い文は避ける(100文字以上をマーク)'},
   # 以下は問題ない場合も多い
   {'regexp'=>/(\p{Han}\p{Han})する[^，、]*\1/, 'desc'=>'「検索するために検索」のように同じサ変動詞が2回現れている(?)'},
   # {'regexp'=>/を行う/, 'desc'=>'を行う→する(?)'},
   {'regexp'=>/で[，、].*で[，、]/, 'desc'=>'「で，」が連続'},
   {'regexp'=>/(?<![にで])は[，、].*(?<![にで])は[，、]/, 'desc'=>'「は，」が連続'},
-  {'regexp'=>/[^いる]が[，、].*[^いる]が[，、]/, 'desc'=>'「が，」が連続'},
+  {'regexp'=>/[^いる]が[，、].*[^いる]が[，、]/, 'desc'=>'接続助詞「が，」が多用されている'},
   {'regexp'=>/際に.*際に/, 'desc'=>'「際に」が連続'},
   {'regexp'=>/場合.*場合/, 'desc'=>'「場合」が連続'},
   {'regexp'=>/対し.*対し/, 'desc'=>'「対し」が連続'},
@@ -198,316 +239,394 @@ $regexp = [
   # 「対し」だけ例外扱い
   {'regexp'=>/(?<!対)([いきしちにひみり])[，、].*\1[，、]/, 'desc'=>'「〜し，〜し，」のように同じ「い段」の文字が読点の前で連続'},
   # 数式モードの中で連続する2文字以上の単語にマッチ
-  # \Gは$~$が1行に複数あった場合への対策
-  {'regexp'=>/\G[^$]*\$[^$]*(?<![\\{])\b[A-Za-z]{2,}[^$]*\$/, 'desc'=>'$log$のように書いた場合，l*o*gという意味．関数ならば\log，イタリックならば\textit{abc}を使うこと'},
+  # \Gは前回マッチ位置の直後にマッチ．$~$が1行に複数あった場合への対策
+  {'regexp'=>/\G[^$]*\$[^$]*(?<![\\{])\b[A-Za-z]{2,}[^$]*\$/, 'desc'=>'$log$のように書いた場合，l*o*gという意味．関数ならば\log，イタリックならば\textit{abc}を使う'},
   {'regexp'=>/\G[^$]*\$[^$]*(?<![\\{])\b,[0-9]{3}\b[^$]*\$/, 'desc'=>'数式モードの中で大きな数の桁区切りは{,}を使う'},
-  # 中国人留学生の典型的な間違い
-  # ここでは「ないの」は除外し，次でチェック
-  {'regexp'=>/(?<!互|くら|ぐら|な)いの(?!だが)/, 'desc'=>'形容詞の後に余分な「の」(?)'}, ## 等しいのため
-  # 「ないので」はOK
-  {'regexp'=>/(?<=ない)の(?!で)/, 'desc'=>'「ないの」→「ない」(?)'}, ## 少ないの場合
-  {'regexp'=>/(?<=い)だ(?=と)/, 'desc'=>'形容詞の後に余分な「だ」(?)'},  ## 少ないだと
-#  {'regexp'=>/(?<=る)の(?!\p{Hiragana})/, 'desc'=>'余分な「の」(?)'},   ## いるの場合
-  {'regexp'=>/(?<=る)の(?![かにはで])/, 'desc'=>'余分な「の」(?)'},   ## いるの場合
 ]
 
-$regexpPara.each {|ent|
-  ent['match'] = ''
-}
-$regexp.each {|ent|
-  ent['match'] = ''
-}
+# 行番号部分にマッチする正規表現
+$header_line_regexp = '^\d+:'
+$header_lines_regexp = '^\d+(\.\.\d+)?:'
 
-# 強制的に入れる行番号部分にマッチする正規表現
-$lineRegexp = '^\d+:'
-
-def addlinenum(t, lnum)
-  "#{lnum}:#{t}"
+def add_line_number(t, start_line, end_line = 0)
+  if start_line == end_line || end_line == 0 then
+    "#{start_line}:#{t}"
+  else
+    "#{start_line}..#{end_line}:#{t}"
+  end
 end
 
-def getlinenum(t)
-  x = t.gsub(/^(\d+):.*/, '\1')
-  x.to_i
+def get_line_number(t)
+  # print "get_line_number: #{t}\n"
+  md = t.match(/^(\d+):(.*)/)
+  if md then
+    return md[1].to_i, md[2]
+  else
+    abort "no line number! #{t}"
+  end
 end
 
-def removelinenum(t)
-  t.gsub(/^(\d+):/, '')
+def mark_text(t)
+  if $mono then
+    "#{$marker_mono[0]}#{t}#{$marker_mono[1]}"
+  else
+    "#{$marker_color[0]}#{t}#{$marker_color[1]}"
+  end
 end
 
-# single paragraph
+def add_filename!(t, filename)
+  if filename != nil then
+    t.gsub!(/(#{$header_lines_regexp})/, "#{filename}:\\1")
+  end
+end
+
+# 1つの段落を表すクラス
 class Paragraph
-  attr_reader :str
+  attr_reader :paragraph
   attr_reader :sentences
-  def initialize(str)
-    @str = str
-    to_sentences()
+  def initialize(para)
+    @paragraph = para
+    split_to_sentences()
   end
   def to_s
-    "#{@str}"
+    "#{@paragraph}"
   end
 
-  # 段落を1つ以上の文に分割する
-  def to_sentences
-    # print "paragraph[#{to_s()}]\n"
+  # 段落を文に分割する
+  def split_to_sentences
+    print "split_to_sentences[#{to_s()}]\n" if $debug
     @sentences = []
-    lnum = -1
-    lstart = lnum
+    lnum = lstart = 0
     remain = ''
-    @str.each_line {|l|
-      lnum = getlinenum(l)
-      l = removelinenum(l)
-      # print "lnum=#{lnum}, lstart=#{lstart}, remain=#{remain}, l=[#{l}]\n"
-      lstart = lnum if remain == '' || remain == "\n"
-      if (l != "\n" || remain != '') then
+    @paragraph.each_line do |l|
+      lnum, l = get_line_number(l)
+      #print "lnum=#{lnum}, lstart=#{lstart}, remain=#{remain}, l=[#{l}]\n"
+      lstart = lnum if remain == ''
+      l = l.strip
+      if remain =~ /\p{^ascii}$/ && l =~ /^\p{^ascii}/ then
+        # 日本語の継続行
         remain << l
+      else
+        remain << " " << l
       end
       while /.*?([．。?？])/m =~ remain do
         #print "remain[" + remain + "]"
         remain = $'
-        remain = '' if remain == "\n"
-        finish($&, lstart, lnum)
+        add_sentence($&, lstart, lnum)
         lstart = lnum
       end
-    }
-    finish(remain, lstart, lnum)
+    end
+    add_sentence(remain, lstart, lnum)
   end
 
-  def finish(s, lstart, lnum)
-    # print "finish #{lstart}-#{lnum} [#{s}]\n"
-    if (s == '') then
-      return
-    end
-    # 日本語文字に続く改行を削除
-    s.gsub!(/(?<=[\p{^ascii}])\n\s*/m, '')
-    # 残った改行は空白に置換
-    s.gsub!(/\n/, ' ')
-    obj = Sentence.new(s, lstart, lnum)
+  def add_sentence(s, line_start, line_end)
+    # p "add_sentence", line_start, line_end, s
+    return if s == ''
+    obj = Sentence.new(s, line_start, line_end)
     @sentences << obj
   end
 
   def check_paragraph
-    lnum = getlinenum(@str)
-    line = removelinenum(@str)
-    $regexpPara.each {|c|
+    lnum, line = get_line_number(@paragraph)
+    $regexp_p.each {|c|
       if c['regexp'] =~ line then
-        tmp = line.gsub(c['regexp'], '>>>\&<<<')
-        tmp = addlinenum(tmp, lnum)
+        tmp = line.gsub(c['regexp'], mark_text('\&'))
+        tmp = add_line_number(tmp, lnum)
         c['match'] <<= tmp.gsub(/\n/, "\n") + "\n";
       end
     }
   end
 end
 
-# single sentence
+# 1つの文を表すクラス
 class Sentence
-  attr_reader :str
+  attr_reader :sentence
   attr_reader :line1
   attr_reader :line2
-  def initialize(str, line1, line2)
-    @str = str
+  def initialize(sentence, line1, line2)
+    @sentence = sentence
     @line1 = line1
     @line2 = line2
   end
 
   def to_s
-    lines + ': ' + @str
-  end
-
-  def lines
-    if @line1 == @line2 then
-      @line1.to_s
-    else
-      @line1.to_s + '..'  + @line2.to_s
-    end
+    add_line_number(@sentence, @line1, @line2)
   end
 
   def check_sentence
-    return if /^\\newcommand/ =~ @str
-    return if /\A\s*\Z/ =~ @str
+    return if /\A\s*\Z/ =~ @sentence
 
-    $regexp.each {|c|
-      if c['regexp'] =~ @str then
-        tmp = @str.gsub(c['regexp'], '>>>\&<<<')
-        c['match'] <<= lines + ": " + tmp.gsub(/\n/, '') + "\n"
+    $regexp_s.each do |c|
+      if c['regexp'] =~ @sentence then
+        tmp = @sentence.gsub(c['regexp'], mark_text('\&'))
+        c['match'] <<= add_line_number(tmp.gsub(/\n/, '') + "\n", @line1, @line2)
       end
-    }
-
-    if /[．，]/ =~ @str then
-      $zperiod += 1
-      $zpline << to_s + (/\n\Z/ =~ str ? '' : "\n")
-    end
-    if /[。、]/ =~ @str then
-      $zkuten += 1
-      $zkline << to_s + (/\n\Z/ =~ str ? '' : "\n")
     end
   end
 end
 
 def prepare(texts)
   # 行番号を行頭に付与
-  lnum = 1
-  t = ''
-  texts.each_line {|l|
-    t << addlinenum(l, lnum)
-    lnum = lnum + 1
-  }
+  t = texts.split(/(?<=\n)/)
+    .each.with_index(1)
+    .map {|l, index| add_line_number(l, index)}
+    .join("") << "\n"
 
   # *? は最小量指定子
-  # % 以降を削除
-  t.gsub!(/#{$lineRegexp}%.*?$\n/m, '')
+  # % 以降を削除 (\% を除く)
   t.gsub!(/(?<!\\)%.*?$/m, '')
+
+  # \begin{document}までを削除
+  t.gsub!(/.*\\begin{document}.*?$/m, '')
+  # \end{document}以降を削除
+  t.gsub!(/\\end{document}.*/m, '')
+
+  # \newcommandを削除 (複数行に渡る場合は無理)
+  t.gsub!(/\\newcommand\*?{.*?$/m, '')
+
+  # \defを削除 (複数行に渡る場合は無理)
+  t.gsub!(/\\def\\.*?$/m, '')
 
   # \\TODO{...}を削除
   t.gsub!(/\\TODO{.*?}/m, '')
 
+  # \begin{verbatim}〜\end{verbatim}を削除
+  t.gsub!(/\\begin{verbatim}.*?\\end{verbatim}.*?/m, '')
+
   # \begin{comment}〜\end{comment}を削除
-  t.gsub!(/\\begin{comment}.*?\\end{comment}/m, '')
-  # \begin{document}までを削除
-  t.gsub!(/.*\\begin{document}/m, '')
-  # \end{document}以降を削除
-  t.gsub!(/\\end{document}.*/m, '')
+  t.gsub!(/\\begin{comment}.*?\\end{comment}.*?/m, '')
 
   # \cite{}の内部をチェックしないようにマスク
-  t.gsub!(/(?<=\\cite{)[^}]*(?=})/, 'CITEMASK')
+  t.gsub!(/(?<=\\cite{)[^}]*(?=})/, '**')
+
+  # 以上の処理で空行になった行を削除
+  t.gsub!(/^$\n/, '')
+
+  # ピリオド・カンマと句読点の数をそれぞれ数える
+  t.each_line do |s|
+    if /[．，]/ =~ s then
+      $zperiod += 1
+      $zpline << s
+    end
+    if /[。、]/ =~ s then
+      $zkuten += 1
+      $zkline << s
+    end
+  end
+  p t if $debug
   t
 end
 
-def to_paragraph(texts0)
-  texts = texts0.clone
+def split_to_paras(texts)
+  # remove figures and tables
+  texts = texts.gsub(
+    /^#{$header_line_regexp}\s*?\\begin{(figure|table)\*?}
+    .*?
+    \\end{(figure|table)\*?}.*$
+    /mx, '')
 
-  # remove figure and table
-  texts.gsub!(/\\begin{(figure|table)\*?}.*?\\end{(figure|table)\*?}/m) {|x| x.gsub(/^.*$/, '')}
+  empty_line = "#{$header_line_regexp}\s*\n"
 
-  # add sentinel
-  texts = texts + "\n#{addlinenum('', 99999)}\n" if (texts !~ /\n#{$lineRegexp}\n$/)
+  # まず，空行で分割
+  chunks = texts.split(/\n(?:#{empty_line})+/)
 
   paras = []
-  p = ''
-  texts.each_line {|l|
-    # print "[l=#{l}]\n"
-    lnum = getlinenum(l)
-    # 段落の先頭に空行を足さない
-    if (p != '' || l !~ /#{$lineRegexp}$/) then
-      p << l
-    end
-    # print "[p=#{p}]\n"
-    # 段落ごとに切り分ける
-    if /(\n#{$lineRegexp}\n|\\item|\\(begin|end|(sub)*section\*?|vspace)\{.*?\}|\\paragraph|\\par\s|\\newpage|\\clear(double)?page)/m =~ p then
-      tmp = $`
-      # print "[tmp=#{tmp}]\n"
-      p = $' || ''
-      if (p !~ /^\s*$/) then
-        p = addlinenum(p, lnum)
+  # それぞれのchunkは複数の段落を含む可能性があるので，ざっくり分割する
+  chunks.each do |chunk|
+    cont = ''
+    chunk.each_line do |line|
+      # puts "line=[#{line}]" if $debug
+      lnum, text = get_line_number(line)
+      text << "\n"
+      frags = text.split(/
+        # 肯定先読み (?=pat)   キャプチャしない (?:pat)
+        (?:
+        \\item
+        |\\(?:begin|end|chapter|(?:sub)*section\*?|paragraph|vspace)\{.*?\}
+        |\\par
+        |\\newpage
+        |\\clearpage
+        |\\cleardoublepage
+        )/mx)
+      # cont = "100:text1\n"
+      # line = "101:text2 <SEP> text3 <SEP> text4"
+      # text = "text2 <SEP> text3 <SEP> text4\n"
+      # frags = "text2", "text3", "text4\n"
+      # last = "100: text4"
+      last = frags.pop
+      last = add_line_number(last, lnum)
+      frags.each do |s|
+        # p s if $debug
+        s = add_line_number(s, lnum)
+        cont << s
+        if cont !~ /#{$header_line_regexp}\s*$/ then
+          # p "para1", cont if $debug
+          paras << Paragraph.new(cont)
+        end
+        cont = ''
       end
-      if (tmp !~ /^\A*\Z/m) then
-        paras << Paragraph.new(tmp)
-      end
+      cont = last
     end
-  }
+    if cont !~ /#{$header_line_regexp}\s*$/ then
+      # puts "para2: #{cont}" if $debug
+      paras << Paragraph.new(cont)
+    end
+  end
+  if $debug then
+    puts "[paragraphs]"
+    puts paras.join("-----\n")
+  end
   paras
 end
 
-def printRegexpCheck
-  $regexpPara.each {|c|
-    print "===" + c['desc'] + "===\n" + c['match'] + "\n" if c['match'] != ''
+def print_regexp_check_results(filename)
+  $regexp_p.each {|c|
+    match = c['match']
+    if match != '' then
+      add_filename!(match, filename)
+      print "=== " + c['desc'] + " ===\n" + match + "\n"
+    end
   }
-  $regexp.each {|c|
-    print "===" + c['desc'] + "===\n" + c['match'] + "\n" if c['match'] != ''
+  $regexp_s.each {|c|
+    match = c['match']
+    if match != '' then
+      add_filename!(match, filename)
+      print "=== " + c['desc'] + " ===\n" + match + "\n"
+    end
   }
 end
 
-def printKutoutenCheck
-  if ($zkuten > 0 && $zperiod > 0) then
-    print "===句読点（。、）と全角のコンマやピリオド（．，）を混ぜて使わないこと===\n"
-    print "  # 全角ピリオドあるいはカンマを含む行数: #{$zperiod}\n"
-    print "  # 句読点を含む行数: #{$zkuten}\n\n"
-    if (0 < $zkuten && $zkuten <= $zperiod) then
-      print "  ===句読点が使われている行===\n" + $zkline + "\n"
+def print_kutouten_check_results(filename)
+  if $zkuten > 0 && $zperiod > 0 then
+    print "=== 句読点（。、）と全角のカンマ・ピリオド（．，）が混在 ===\n"
+    print "- 全角ピリオドあるいはカンマを含む行数: #{$zperiod}\n"
+    print "- 句読点を含む行数: #{$zkuten}\n"
+    add_filename!($zkline, filename)
+    add_filename!($zpline, filename)
+    if 0 < $zkuten && $zkuten <= $zperiod then
+      print "--- 句読点が使われている行 ---\n" + $zkline + "\n"
     end
-    if (0 < $zperiod && $zperiod < $zkuten) then
-      print "==全角ピリオドあるいはカンマが使われている行==\n" + $zpline + "\n"
+    if 0 < $zperiod && $zperiod < $zkuten then
+      print "--- 全角ピリオドあるいはカンマが使われている行 ---\n" + $zpline + "\n"
     end
   end
 end
 
 # check figure and table environments
-def checkFigTab(s)
-  tmp = s
+def check_figure_and_table(s, filename)
   labels = {}
   warn = ''
-  while (/\\begin\{(figure|table)\*?\}(\[.*?\])?(.*?)\\end\{\1\*?\}/m =~ tmp) do
-    env = $1
-    fig = $3
-    tmp = $'
-    if /\\caption/ !~ fig then
-      warn << "#{env}環境に\\captionがない\n"
-      warn << fig + "\n"
+  s.scan(/(#{$header_line_regexp}\s*\\begin\{(figure|table)\*?\}(\[.*?\])?\s*(.*?)\\end\{\2\*?\})/m) do |match|
+    env, type, opt, content = match
+    w = ''
+    if /\\caption/ !~ content then
+      w << "--- #{type}環境に\\captionがない ---\n"
     end
-    if /\\ecaption\{([^}]*[^.])\}/ =~ fig then
-      warn << "英語キャプション(ecaption)の最後はピリオドが必要 " + $1 + "\n";
+    if type == 'figure' && /\\caption.*\\includegraphics/m =~ content then
+      w << "--- 図のキャプションは図の下に置く ---\n"
     end
-    if /\\label{(.*?)}/ !~ fig then
-      warn << "#{env}環境に\\labelがない\n"
-      warn << fig + "\n"
+    if type == 'table' && /\\begin{tabular}.*\\caption/m =~ content then
+      w << "--- 表のキャプションは表の上に置く ---\n"
+    end
+    if /\\label{(.*?)}/ !~ content then
+      w << "--- #{type}環境に\\labelがない ---\n"
     else
       labels[$1] = true
+    end
+    if /\\ecaption\{([^}]*[^.])\}/ =~ content then
+      w << "--- 英語キャプション(ecaption)の最後はピリオドが必要 ---\n"
+    end
+    if w != '' then
+      warn << w
+      warn << env << "\n\n"
     end
   end
 
   labels.each_key {|key|
-    # \figref と \tabref がラベル名に fig: や tab: を付け加えている．
-    k = key.gsub(/^(fig|tab):/, '')
-    if /\\(fig|tab)?ref\{(#{key}|#{k})\}/ !~ s then
-      warn << "図表{#{key}}は本文から参照されていないようです\n"
+    # \figref と \tabref がラベル名に content: や tab: を付け加えている．
+    k = key.gsub(/^(content|tab):/, '')
+    if /\\(content|tab)?ref\{(#{key}|#{k})\}/ !~ s then
+      warn << "図表{#{key}}は本文から参照されていない(?)\n"
     elsif /\\label\{#{key}\}/ =~ $` then
-      warn << "図表{#{key}}は本文から参照される前に登場しているかもしれません\n"
+      warn << "図表{#{key}}は本文から参照される前に登場している(?)\n"
     end
   }
-  print "===図表===\n" + warn + "\n" if warn != ''
+  if warn != '' then
+    add_filename!(warn, filename)
+    print "=== 図表 ===\n" + warn + "\n"
+  end
 end
 
-def main
-  params = ARGV.getopts('d')
-  debug = params["d"]
-  name = $0.gsub(/.*\//, '')
-
-  print "=====================================================\n"
-  print " 間違った指摘をする可能性が十分あるので注意すること!\n"
-  print " checked by #{name} #{$VERSION}\n"
-  print "=====================================================\n\n"
-
+def check_file(filename, printFilename)
+  # reset variables...
   $zpline = ''
   $zkline = ''
   $zkuten = 0
   $zperiod = 0
-
-  # read entire file
-  texts = ARGF.read
+  $regexp_p.each {|ent| ent['match'] = ''}
+  $regexp_s.each {|ent| ent['match'] = ''}
+  # read the entire file
+  begin
+    file = File.open(filename)
+    texts = file.read
+    file.close()
+  rescue => e
+    p e.message
+    abort
+  end
+  # convert to UTF-8, LF line break
   texts = NKF.nkf('-w -Lu', texts)
 
   texts = prepare(texts)
-  paras = to_paragraph(texts)
+  paras = split_to_paras(texts)
 
-  pnum = 1
-  paras.each {|p|
-    if (debug) then
-      print "Paragraph #{pnum}\n"
-      p.sentences.each {|s| print ">> #{s}\n"}
+  puts "\n[checking paragraphs]" if $debug
+  paras.each.with_index(1) {|par, index|
+    if $debug then
+      par.sentences.each {|s| print "P#{index}|#{s}\n"}
     end
-    p.check_paragraph()
-    p.sentences.each {|s|
-      s.check_sentence()
-    }
-    pnum = pnum + 1
+    par.check_paragraph()
+    par.sentences.each {|s| s.check_sentence()}
   }
-  print "--------------------------------\n\n" if (debug)
+  puts "\n--------------------------------\n" if $debug
 
-  printRegexpCheck()
-  printKutoutenCheck()
+  fname = printFilename ? filename : nil
+  print_regexp_check_results(fname)
+  print_kutouten_check_results(fname)
+  check_figure_and_table(texts, fname)
+end
 
-# print texts
+def main
+  params = ARGV.getopts('dmh')
+  $debug = params["d"]
+  $mono = params["m"]
+  $help = params["h"]
+  $name = $0.gsub(/.*\//, '')
 
-  checkFigTab(texts)
+  if $help || ARGV.length == 0 then
+    puts <<~EOS
+      Usage: ruby #{$name} [-m][-h][-d] files...
+      日本語のLaTeXのファイルに対して(いいかげんな)警告を出力します．
+      オプション:
+        -m: ANSI colorを使わない
+        -h: ヘルプ (この画面)
+        -d: デバッグ用
+      例:
+        ruby #{$name} foo.tex bar.tex
+    EOS
+    exit(1)
+  end
+
+  print "=====================================================\n"
+  print " 間違った指摘をする可能性が十分あるので注意すること!\n"
+  print " checked by #{$name} #{$VERSION}\n"
+  print "=====================================================\n\n"
+
+  nfiles = ARGV.length
+  while file = ARGV.shift do
+    print "checking #{file} ...\n\n"
+    check_file(file, nfiles > 1)
+  end
 end
 
 main()
