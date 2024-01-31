@@ -35,7 +35,7 @@ end
 require 'nkf'
 require 'optparse'
 
-$VERSION = '0.3.0'
+$VERSION = '0.3.1'
 $debug = false
 
 $marker_mono = ['>>>', '<<<']
@@ -543,9 +543,7 @@ def check_figure_and_table(s, filename)
   end
 
   labels.each_key {|key|
-    # \figref と \tabref がラベル名に content: や tab: を付け加えている．
-    k = key.gsub(/^(content|tab):/, '')
-    if /\\(content|tab)?ref\{(#{key}|#{k})\}/ !~ s then
+    if /\\(fig|tab)?ref\{#{key}\}/ !~ s then
       warn << "図表{#{key}}は本文から参照されていない(?)\n"
     elsif /\\label\{#{key}\}/ =~ $` then
       warn << "図表{#{key}}は本文から参照される前に登場している(?)\n"
